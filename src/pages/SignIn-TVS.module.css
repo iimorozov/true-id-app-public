@@ -1,0 +1,46 @@
+.trueID {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+.content {
+  max-width: 400px;
+  text-align: center;
+  padding: 2rem;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 1rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.description {
+  font-size: 16px;
+  margin-bottom: 2rem;
+}
+
+.signButton {
+  background-color: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 24px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.signButton:hover {
+  background-color: #0055aa;
+}
+
+.signButtonText {
+  font-size: 16px;
+  font-weight: 500;
+}

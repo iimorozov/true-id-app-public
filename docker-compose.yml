@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        - NPM_TOKEN=${NPM_TOKEN:-}
+    network_mode: "host"
+    environment:
+      - API_URL=${API_URL:-https://support-stg-now.truevisions.co.th}
+      - API_HOST=${API_HOST:-support-stg-now.truevisions.co.th}
+    restart: unless-stopped
