@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { useOptions } from '../context/OptionsContext';
 import styles from './SignIn-TVS.module.css';
 import { loginByTrueIdApi } from '../services';
+import { calculateBackoff } from '../services/utils/retry.ts';
 
 function SignInTVS({ setIsSignIn }: any) {
   const navigate = useNavigate();
@@ -18,6 +19,74 @@ function SignInTVS({ setIsSignIn }: any) {
   // State for TrueID authentication session
   const [sessionState, setSessionState] = useState<any>(null);
 
+  // Retry configuration
+  const retryCountRef = useRef(0);
+  const MAX_RETRIES = 3;
+  const retryTimeoutRef = useRef<number | null>(null);
+  // Add a retry attempt ID to force useEffect to react even with the same token
+  const [retryAttemptId, setRetryAttemptId] = useState(0);
+
+  // Clear all retry state
+  const clearRetryState = () => {
+    retryCountRef.current = 0;
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+  };
+
+  // Function to refresh session status and retry auth flow
+  const refreshSessionAndRetry = () => {
+    if (retryCountRef.current < MAX_RETRIES) {
+      const backoffTime = calculateBackoff(retryCountRef.current, 300, 2, 10000);
+
+      console.log(`Scheduling retry ${retryCountRef.current + 1}/${MAX_RETRIES} after ${Math.round(backoffTime)}ms`);
+
+      // Clear any existing timeout
+      if (retryTimeoutRef.current)
+        clearTimeout(retryTimeoutRef.current);
+
+      // Schedule retry after backoff delay
+      retryTimeoutRef.current = setTimeout(() => {
+        console.log(`Executing retry ${retryCountRef.current + 1}/${MAX_RETRIES}`);
+        retryCountRef.current += 1;
+
+        // Increment retry attempt ID to force useEffect to trigger
+        setRetryAttemptId(prev => prev + 1);
+
+        // Refresh session status
+        client.getStatus()
+          .then((status: any) => {
+            // Wrap the status in a new object to ensure React sees it as a new state value
+            setSessionState({...status, _retryAttempt: retryCountRef.current});
+          })
+          .catch((statusError: any) => {
+            console.error('Failed to get status during retry: ', statusError);
+            // Try again if still have retries
+            if (retryCountRef.current < MAX_RETRIES) {
+              refreshSessionAndRetry();
+            } else {
+              // Clear retry state after reaching maximum attempts
+              clearRetryState();
+              // Reset lock to allow new login attempts via button click
+              lockRef.current = false;
+              toast(`Maximum retry attempts reached. Click the button to try again.`, {
+                type: 'error',
+              });
+            }
+          });
+      }, backoffTime);
+    } else {
+      // Max retries reached - clear retry state
+      clearRetryState();
+      // Reset lock to allow new login attempts via button click
+      lockRef.current = false;
+      toast(`Maximum retry attempts reached. Click the button to try again.`, {
+        type: 'error',
+      });
+    }
+  };
+
   /**
    * Handles backend authentication using TrueID access token
    * After successful authentication, redirects user to dashboard
@@ -30,15 +99,17 @@ function SignInTVS({ setIsSignIn }: any) {
 
       loginByTrueIdApi({ token: accessToken })
         .then(() => {
+          // Success! Clear all retry state
+          clearRetryState();
+
           setIsSignIn(true);
           navigate(`/dashboard`, { state: { afterLogin: true } });
         })
-        .catch((e) => {
+        .catch((e: any) => {
           lockRef.current = false;
-          client.getStatus().then(setSessionState);
-          toast(`${e.message}. Pls reload page or contact with support center.`, {
-            type: 'warning',
-          });
+          console.warn(`${e.message}. Attempting to reconnect...`)
+          // Start retry flow
+          refreshSessionAndRetry();
         });
     }
   };
@@ -46,16 +117,17 @@ function SignInTVS({ setIsSignIn }: any) {
   /**
    * Initiates the TrueID login flow
    */
-  const handleClick = () => client.login(setSessionState);
+    const handleClick = () => client.login(setSessionState);
 
   /**
-   * Effect hook to process login after receiving access token
+   * Effect hook to process login after receiving access token or retry attempt
+   * The dependency array includes retryAttemptId to ensure it runs on retry
    */
   useEffect(() => {
     const accessToken = sessionState?.access_token;
-    if (!accessToken) return;
+    if (!accessToken || !client) return;
     loginByTrueId(accessToken);
-  }, [sessionState?.access_token]);
+  }, [sessionState?.access_token, retryAttemptId, client]);
 
   /**
    * Effect hook to initialize TrueID client and check login status
@@ -73,14 +145,17 @@ function SignInTVS({ setIsSignIn }: any) {
 
     trueIdAuth
       .getStatus()
-      .then((status) => {
-        setSessionState(status);
-      })
+      .then(setSessionState)
       .catch(() => {
         toast(`SSO was blocked. Pls reload page or contact with support center.`, {
           type: 'error',
         });
       });
+
+    // Cleanup function to clear any pending timeouts
+    return () => {
+      clearRetryState();
+    };
   }, [options.trueId, isLoading]);
 
   if (isLoading) return <div>Loading options...</div>;
